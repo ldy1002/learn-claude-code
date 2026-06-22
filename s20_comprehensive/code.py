@@ -1190,15 +1190,15 @@ def compact_history(messages: list) -> list:
 def reactive_compact(messages: list) -> list:
     transcript = write_transcript(messages)
     print(f"  \033[31m[reactive compact] transcript saved: {transcript}\033[0m")
-    try:
-        summary = summarize_history(messages)
-    except Exception:
-        summary = "Earlier conversation was trimmed after a prompt-too-long error."
     tail_start = max(0, len(messages) - 5)
     if (tail_start > 0 and tail_start < len(messages)
             and is_tool_result_message(messages[tail_start])
             and message_has_tool_use(messages[tail_start - 1])):
         tail_start -= 1
+    try:
+        summary = summarize_history(messages[:tail_start])
+    except Exception:
+        summary = "Earlier conversation was trimmed after a prompt-too-long error."
     return [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"},
             *messages[tail_start:]]
 
