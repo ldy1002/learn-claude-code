@@ -36,6 +36,8 @@ WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
+# f-string 是 Python 3.6 引入的字符串格式化方法，允许在字符串中嵌入变量或表达式。
+# 大括号 {} 中的内容会在运行时被替换为对应的变量值或表达式结果。
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use tools to solve tasks. Act, don't explain."
 
 
@@ -61,28 +63,61 @@ def run_bash(command: str) -> str:
 
 # ═══════════════════════════════════════════════════════════
 #  NEW in s02: 4 个新工具
+#  run_read, run_write, run_edit, run_glob
 # ═══════════════════════════════════════════════════════════
 
+"""
+确保路径安全，防止访问工作目录之外的文件。
+接收一个字符串路径参数 p，返回一个 Path 对象。
+如果路径不在工作目录下，则抛出 ValueError 异常，提示路径越界。
+"""
 def safe_path(p: str) -> Path:
+    # (WORKDIR / p) 将工作目录与输入路径拼接
+    # resolve() 将路径解析为绝对路径 
     path = (WORKDIR / p).resolve()
+
+    # 使用 is_relative_to 检查 path 是否为 WORKDIR 的子路径
+    # 若不是，则使用 raise 语句抛出异常
     if not path.is_relative_to(WORKDIR):
         raise ValueError(f"Path escapes workspace: {p}")
     return path
 
 
+"""
+用于读取文件内容的工具函数。
+path 指定要读取的文件路径。
+limit 是可选参数，指定返回的最大行数。
+- "int | None" 是 Python 3.10 引入的联合类型语法，表明该参数接受 int 类型或 None 类型。
+- "= None" 表示 limit 参数的默认值为 None，即如果调用函数时未提供 limit 参数，则默认为 None。
+如果指定了行数限制参数，函数将只返回前 limit 行，并在末尾添加一条消息，指示还有多少行未显示。
+"""
 def run_read(path: str, limit: int | None = None) -> str:
     try:
+        # read_text() 读取文件内容，返回一个字符串。
+        # splitlines() 将字符串按换行符分割为列表（丢弃换行符）。
         lines = safe_path(path).read_text().splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
+        
+        # 将列表 lines 中的元素连接为一个字符串，每个元素之间用换行符 "\n" 分隔。
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {e}"
 
 
+"""
+用于写入文件内容的工具函数。
+path 指定要写入的文件路径。
+content 指定要写入的内容。
+"""
 def run_write(path: str, content: str) -> str:
     try:
         file_path = safe_path(path)
+
+        # file_path.parent 获取文件的父目录路径
+        # mkdir 接收两个参数
+        # - parents=True 表示如果父目录不存在，则创建所有必要的父目录
+        # - exist_ok=True 表示只有在目录不存在时创建目录，如果目录已存在则不会抛出异常
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
         return f"Wrote {len(content)} bytes to {path}"
@@ -90,6 +125,12 @@ def run_write(path: str, content: str) -> str:
         return f"Error: {e}"
 
 
+"""
+用于编辑文件内容的工具函数，将文件中指定的旧文本替换为新文本。
+path 指定要编辑的文件路径。
+old_text 指定要被替换的旧文本。
+new_text 指定要替换的新文本。
+"""
 def run_edit(path: str, old_text: str, new_text: str) -> str:
     try:
         file_path = safe_path(path)
@@ -102,10 +143,18 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         return f"Error: {e}"
 
 
+"""
+用于查找符合特定规则的文件或目录。
+pattern 指定要匹配的模式。
+"""
 def run_glob(pattern: str) -> str:
+    # glob 是 Python 标准库中的一个模块，用于查找符合特定规则的文件或目录。
     import glob as g
     try:
         results = []
+        
+        # 以 WORKDIR 为根目录，使用 glob 模块查找匹配 pattern 的路径
+        # match 是相对于 WORKDIR 的路径字符串
         for match in g.glob(pattern, root_dir=WORKDIR):
             if (WORKDIR / match).resolve().is_relative_to(WORKDIR):
                 results.append(match)
@@ -162,7 +211,11 @@ def agent_loop(messages: list):
         for block in response.content:
             if block.type == "tool_use":
                 print(f"\033[33m> {block.name}\033[0m")
+
+                # TOOL_HANDLERS.get(block.name) 返回对应的工具函数
                 handler = TOOL_HANDLERS.get(block.name)
+
+                # handler(**block.input) 调用工具函数，双星号（**）表示将 block.input 以字典形式向函数传参
                 output = handler(**block.input) if handler else f"Unknown: {block.name}"
                 print(str(output)[:200])
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
