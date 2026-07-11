@@ -148,6 +148,9 @@ TOOL_HANDLERS = {
 # Gate 1: Hard deny list — always forbidden
 DENY_LIST = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", "dd if=", "> /dev/sda"]
 
+"""
+检查给定的命令是否包含在 hard deny 列表中，如果包含则返回阻止消息，否则返回 None
+"""
 def check_deny_list(command: str) -> str | None:
     for pattern in DENY_LIST:
         if pattern in command:
@@ -158,13 +161,21 @@ def check_deny_list(command: str) -> str | None:
 # Gate 2: Rule matching — context-dependent checks
 PERMISSION_RULES = [
     {"tools": ["write_file", "edit_file"],
+    # 检测路径是否在工作目录之外
+    # 使用 lambda 创建匿名函数，args 为要传入的参数，":" 后的表达式用于计算并返回函数的结果
+    # 此处 args 是一个字典，args.get("path", "") 用于获取字典中键为 "path" 的值，如果不存在则返回空字符串 ""
      "check": lambda args: not (WORKDIR / args.get("path", "")).resolve().is_relative_to(WORKDIR),
      "message": "Writing outside workspace"},
     {"tools": ["bash"],
+    # 检查 args 字典中键为 "command" 的值是否包含任何潜在破坏性的命令关键字，如 "rm "、"> /etc/" 或 "chmod 777"
      "check": lambda args: any(kw in args.get("command", "") for kw in ["rm ", "> /etc/", "chmod 777"]),
      "message": "Potentially destructive command"},
 ]
 
+"""
+检查给定工具名称（tool_name）和参数（args）是否匹配任何权限规则
+如果匹配，则返回相应的消息；否则返回 None
+"""
 def check_rules(tool_name: str, args: dict) -> str | None:
     for rule in PERMISSION_RULES:
         if tool_name in rule["tools"] and rule["check"](args):
@@ -183,12 +194,16 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
 # Pipeline: all three gates chained
 def check_permission(block) -> bool:
     if block.name == "bash":
+        # Gate 1: Hard deny
         reason = check_deny_list(block.input.get("command", ""))
         if reason:
             print(f"\n\033[31m⛔ {reason}\033[0m")
             return False
+    
+    # Gate 2: Rule matching
     reason = check_rules(block.name, block.input)
     if reason:
+        # Gate 3: User approval
         decision = ask_user(block.name, block.input, reason)
         if decision == "deny":
             return False
@@ -208,6 +223,7 @@ def agent_loop(messages: list):
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
+            # import pdb; pdb.set_trace()
             return
 
         results = []
@@ -246,6 +262,7 @@ if __name__ == "__main__":
         history.append({"role": "user", "content": query})
         agent_loop(history)
         for block in history[-1]["content"]:
+            # getattr 用于获取 block 对象的 type 属性值，如果不存在则返回 None
             if getattr(block, "type", None) == "text":
                 print(block.text)
         print()
