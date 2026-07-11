@@ -156,18 +156,49 @@ TOOL_HANDLERS = {
 #  NEW in s04: Hook System (s03 permission logic now via hooks)
 # ═══════════════════════════════════════════════════════════
 
+"""
+四个事件触发时机的说明：
+1. UserPromptSubmit: 用户输入提交后、进入 LLM 前触发
+2. PreToolUse: 执行工具前触发
+3. PostToolUse: 执行工具后触发
+4. Stop: 循环即将退出时触发
+"""
 HOOKS = {"UserPromptSubmit": [], "PreToolUse": [], "PostToolUse": [], "Stop": []}
 
+"""
+注册回调函数到指定事件
+event: 事件名称，必须是 HOOKS 中的键
+callback: 回调函数
+"""
 def register_hook(event: str, callback):
     HOOKS[event].append(callback)
 
+"""
+触发指定事件的回调函数
+event: 事件名称，必须是 HOOKS 中的键
+*args: 传递给回调函数的参数（"*" 表示将多个参数收集为一个元组）
+"""
 def trigger_hooks(event: str, *args):
+    # 遍历指定事件的所有回调函数，依次调用它们
+    # 如果任意回调函数返回非 None 值，则立即返回该值，后续的回调函数不再执行
     for callback in HOOKS[event]:
         result = callback(*args)
         if result is not None:  # teaching shortcut: block this tool call
             return result
     return None
 
+
+"""
+回调函数：
+1. permission_hook: 在 PreToolUse 事件触发时检查工具调用的权限
+2. log_hook: 在 PreToolUse 事件触发时打印工具调用信息
+3. large_output_hook: 在 PostToolUse 事件触发时检查输出是否过大
+4. context_inject_hook： 在 UserPromptSubmit 事件触发时打印工作目录信息
+5. summary_hook: 在 Stop 事件触发时打印工具调用的总结信息
+
+在回调函数的设计中，若回调函数返回非 None 值，则表示阻止后续回调函数的调用。
+否则，该回调函数返回 None，后续的回调函数将继续执行。
+"""
 
 # s03 permission check logic, now wrapped as a hook
 DENY_LIST = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", "dd if="]
@@ -244,6 +275,8 @@ def agent_loop(messages: list):
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
+            # 在循环即将退出时触发 Stop hooks
+            # 若任意回调函数返回非 None 值，将阻止退出，强制循环继续，并将返回值加入 messages
             force = trigger_hooks("Stop", messages)
             if force:
                 messages.append({"role": "user", "content": force})
@@ -251,20 +284,50 @@ def agent_loop(messages: list):
             return
 
         results = []
+
+        # 依次处理响应中的所有 ToolUseBlock（非 tool_use 类型的 block 直接跳过）
         for block in response.content:
             if block.type != "tool_use":
                 continue
 
             # s04 change: hook replaces hard-coded check_permission()
+            # 在调用工具前触发 PreToolUse hooks
+            # 若任意回调函数返回非 None 值，则阻止工具调用，并将返回值加入结果
             blocked = trigger_hooks("PreToolUse", block)
             if blocked:
                 results.append({"type": "tool_result", "tool_use_id": block.id,
                                 "content": str(blocked)})
-                continue
+                
+                continue """为什么是 continue 而不是 break：
+                因为响应中可能有多个 ToolUseBlock，每一个 ToolUseBlock 都必须处理，无论工具是否执行，
+                都要将执行结果或错误信息打包为与之对应（具有相同 tool_use_id）的 tool_result 并添加到消息上下文中。
+                因此不能因为一个工具被阻止就跳出循环，而是应该继续处理其他 ToolUseBlock。
+                
+                Claude API 文档中的相关说明见：https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use
 
+                > When Claude calls tools, the response has a stop_reason of tool_use
+                > and can contain several tool_use blocks in a single assistant turn.
+                > 
+                > How you run those calls is your decision. The API doesn't prescribe an execution order:
+                > you can run the calls concurrently (Promise.all, asyncio.gather),
+                > sequentially in the order they appear, or in any combination that suits your tools.
+                >
+                > Whichever strategy you use, return one tool_result for each tool_use block,
+                > all together in the next user message.
+                > 
+                > Match each result to its call with tool_use_id,
+                > and put every tool_result block before any text content in that message.
+                >
+                > If you choose not to run a particular call
+                > (for example, because you ran the batch sequentially and an earlier call failed),
+                > still return a tool_result for it with `is_error: true` and a brief explanation.
+                """
+
+            # 工具调用
             handler = TOOL_HANDLERS.get(block.name)
             output = handler(**block.input) if handler else f"Unknown: {block.name}"
 
+            # 在调用工具后触发 PostToolUse hooks
             trigger_hooks("PostToolUse", block, output)  # s04: post hook
 
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
@@ -284,6 +347,8 @@ if __name__ == "__main__":
             break
         if query.strip().lower() in ("q", "exit", ""):
             break
+        
+        # 在用户输入提交后、进入 LLM 前触发 UserPromptSubmit hooks
         trigger_hooks("UserPromptSubmit", query)
         history.append({"role": "user", "content": query})
         agent_loop(history)
