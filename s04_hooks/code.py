@@ -298,7 +298,8 @@ def agent_loop(messages: list):
                 results.append({"type": "tool_result", "tool_use_id": block.id,
                                 "content": str(blocked)})
                 
-                continue """为什么是 continue 而不是 break：
+                continue 
+                """ 为什么是 continue 而不是 break：
                 因为响应中可能有多个 ToolUseBlock，每一个 ToolUseBlock 都必须处理，无论工具是否执行，
                 都要将执行结果或错误信息打包为与之对应（具有相同 tool_use_id）的 tool_result 并添加到消息上下文中。
                 因此不能因为一个工具被阻止就跳出循环，而是应该继续处理其他 ToolUseBlock。
