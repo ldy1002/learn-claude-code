@@ -121,18 +121,20 @@ def run_glob(pattern: str) -> str:
 #  NEW in s05: todo_write tool — plan only, no execution
 # ═══════════════════════════════════════════════════════════
 
+
+# Normalizes the todos list to ensure it's a list of valid todo items.
 def _normalize_todos(todos):
-    if isinstance(todos, str):
+    if isinstance(todos, str): # 判断是否为字符串
         try:
-            todos = json.loads(todos)
+            todos = json.loads(todos) # 尝试将字符串解析为 JSON
         except json.JSONDecodeError:
             try:
-                todos = ast.literal_eval(todos)
+                todos = ast.literal_eval(todos) # 尝试将字符串解析为 Python 字面量
             except (SyntaxError, ValueError):
                 return None, "Error: todos must be a list or JSON array string"
     if not isinstance(todos, list):
         return None, "Error: todos must be a list"
-    for i, t in enumerate(todos):
+    for i, t in enumerate(todos): # enumerate() 函数将一个可遍历的数据对象组合为一个索引序列，在 for 循环中可以同时获取索引 i 和对应的元素值 t
         if not isinstance(t, dict):
             return None, f"Error: todos[{i}] must be an object"
         if "content" not in t or "status" not in t:
@@ -141,8 +143,9 @@ def _normalize_todos(todos):
             return None, f"Error: todos[{i}] has invalid status '{t['status']}'"
     return todos, None
 
+# 工具 todo_write 的实现
 def run_todo_write(todos: list) -> str:
-    global CURRENT_TODOS
+    global CURRENT_TODOS # 声明 CURRENT_TODOS 为全局变量，以便在函数内部修改它（若不使用 global 声明，函数内部的变量默认为局部变量）
     todos, error = _normalize_todos(todos)
     if error:
         return error
@@ -154,6 +157,7 @@ def run_todo_write(todos: list) -> str:
     print("\n".join(lines))
     return f"Updated {len(CURRENT_TODOS)} tasks"
 
+# 新增：工具 todo_write 的定义
 TOOLS = [
     {"name": "bash", "description": "Run a shell command.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
@@ -170,6 +174,7 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"todos": {"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}}, "required": ["content", "status"]}}}, "required": ["todos"]}},
 ]
 
+# 新增：将工具 todo_write 及其实现函数 run_todo_write() 的映射注册到 TOOL_HANDLERS 中
 TOOL_HANDLERS = {
     "bash": run_bash, "read_file": run_read, "write_file": run_write,
     "edit_file": run_edit, "glob": run_glob, "todo_write": run_todo_write,
@@ -254,6 +259,7 @@ def agent_loop(messages: list):
             if force:
                 messages.append({"role": "user", "content": force})
                 continue
+            # import pdb; pdb.set_trace()
             return
 
         rounds_since_todo += 1
